@@ -143,6 +143,16 @@
   input::-webkit-calendar-picker-indicator{filter:invert(1) opacity(.6);}
   textarea{resize:vertical;min-height:84px;}
   .two{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;}
+  .chips.scroll{flex-wrap:nowrap;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch;scrollbar-width:none;}
+  .chips.scroll::-webkit-scrollbar{display:none;}
+  .chip{
+    flex:0 0 auto;padding:10px 14px;border-radius:14px;font-size:.92rem;font-weight:400;line-height:1.25;text-align:center;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);color:var(--ivory);
+  }
+  .chip small{display:block;font-size:.72rem;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;}
+  .chip.on{background:linear-gradient(140deg,rgba(201,91,116,.4),rgba(233,199,154,.2));border-color:var(--gold);}
+  .chip.on small{color:var(--blush);}
   .status{margin-top:14px;min-height:20px;font-size:.92rem;color:var(--blush);text-align:center;}
 
   /* sparkle burst */
@@ -151,8 +161,9 @@
   .foot{position:relative;z-index:2;text-align:center;padding:18px;font-size:.78rem;color:rgba(251,243,238,.3);letter-spacing:1px;}
 
   @media(max-width:460px){
-    .card{padding:30px 20px;}
-    .two{grid-template-columns:1fr;}
+    .card{padding:30px 20px;backdrop-filter:none;-webkit-backdrop-filter:none;background:rgba(40,14,30,.72);}
+    .bokeh i:nth-child(n+7){display:none;}
+    .petal:nth-child(n+10){display:none;}
   }
   @media(prefers-reduced-motion:reduce){
     *{animation-duration:.001s!important;animation-iteration-count:1!important;transition-duration:.05s!important;}
@@ -234,10 +245,10 @@
       </div>
 
       <form id="planForm" autocomplete="off">
-        <div class="two">
-          <div><label for="fd">Which day?</label><input type="date" id="fd" required></div>
-          <div><label for="ft">What time?</label><input type="time" id="ft" required></div>
-        </div>
+        <label>Which day?</label>
+        <div class="chips scroll" id="days"></div>
+        <label>What time?</label>
+        <div class="chips" id="times"></div>
         <label for="fw">A place you've been wanting to go? <span style="text-transform:none;letter-spacing:0;color:var(--muted);">(optional)</span></label>
         <input type="text" id="fw" placeholder="or leave it to me">
         <label for="fm">Anything you'd like to tell me? <span style="text-transform:none;letter-spacing:0;color:var(--muted);">(optional)</span></label>
@@ -306,10 +317,12 @@
     pt.appendChild(p);
   }
 
-  function show(id){
+  function show(id, fromHistory){
     $$('.screen').forEach(function(x){ x.classList.remove('active'); });
     var el=document.getElementById(id); el.classList.add('active');
     window.scrollTo({top:0,behavior:'smooth'});
+    if(!fromHistory){ try{ history.pushState({screen:id}, '', location.pathname); }catch(_){} }
+    if(typeof save==='function') save();
     var lines=$$('.line',el);
     lines.forEach(function(l){ l.classList.remove('in'); });
     lines.forEach(function(l,k){ setTimeout(function(){ l.classList.add('in'); }, 700*k+300); });
@@ -368,25 +381,77 @@
     v.addEventListener('click', function(){ v.classList.toggle('on'); if(v.classList.contains('on')) burstAt(v,10); });
   });
 
-  // no picking a day in the past
-  var today=new Date(); today.setMinutes(today.getMinutes()-today.getTimezoneOffset());
-  $('#fd').min=today.toISOString().slice(0,10);
+  /* day + time chips (no native pickers — they reload the page on some phones) */
+  var picked={ day:'', dayLabel:'', time:'' };
+  var daysEl=$('#days'), timesEl=$('#times');
+  for(var dd=0; dd<14; dd++){
+    var dt=new Date(); dt.setDate(dt.getDate()+dd);
+    var c=document.createElement('button'); c.type='button'; c.className='chip';
+    var top = dd===0?'today':dd===1?'tomorrow':dt.toLocaleDateString(undefined,{weekday:'short'});
+    var main = dt.toLocaleDateString(undefined,{day:'numeric',month:'short'});
+    c.innerHTML='<small>'+top+'</small>'+main;
+    c.dataset.v = dt.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'});
+    daysEl.appendChild(c);
+  }
+  ['10:00 AM','12:00 PM','1:00 PM','4:00 PM','5:00 PM','6:00 PM','7:00 PM','8:00 PM','9:00 PM','You choose'].forEach(function(t){
+    var c=document.createElement('button'); c.type='button'; c.className='chip'; c.textContent=t; c.dataset.v=t;
+    timesEl.appendChild(c);
+  });
+  function single(container,key){
+    $$('.chip',container).forEach(function(c){
+      c.addEventListener('click', function(){
+        $$('.chip',container).forEach(function(x){ x.classList.remove('on'); });
+        c.classList.add('on'); picked[key]=c.dataset.v; save();
+      });
+    });
+  }
+  single(daysEl,'day'); single(timesEl,'time');
+
+  /* remember progress, so a reload never sends her back to the start */
+  var KEY='dateInvite';
+  function save(){
+    try{
+      sessionStorage.setItem(KEY, JSON.stringify({
+        screen:(document.querySelector('.screen.active')||{}).id,
+        vibes:$$('.vibe.on').map(function(v){ return v.dataset.v; }),
+        day:picked.day, time:picked.time, where:$('#fw').value, msg:$('#fm').value
+      }));
+    }catch(_){}
+  }
+  function restore(){
+    var st=null; try{ st=JSON.parse(sessionStorage.getItem(KEY)||'null'); }catch(_){}
+    if(!st) return;
+    $$('.vibe').forEach(function(v){ if((st.vibes||[]).indexOf(v.dataset.v)>-1) v.classList.add('on'); });
+    $$('.chip',daysEl).forEach(function(c){ if(c.dataset.v===st.day){ c.classList.add('on'); picked.day=st.day; } });
+    $$('.chip',timesEl).forEach(function(c){ if(c.dataset.v===st.time){ c.classList.add('on'); picked.time=st.time; } });
+    $('#fw').value=st.where||''; $('#fm').value=st.msg||'';
+    if(st.screen && st.screen!=='s-open' && st.screen!=='s-done' && document.getElementById(st.screen)) show(st.screen, true);
+  }
+  $('#fw').addEventListener('input', save);
+  $('#fm').addEventListener('input', save);
+  $$('.vibe').forEach(function(v){ v.addEventListener('click', save); });
+
+  /* phone back button steps back one screen instead of leaving */
+  window.addEventListener('popstate', function(e){
+    var id=(e.state&&e.state.screen)||'s-open';
+    if(id==='s-done'||id==='s-no') return;
+    show(id, true); save();
+  });
 
   var form=$('#planForm'), status=$('#status'), btn=$('#sendBtn');
   form.addEventListener('submit', function(e){
     e.preventDefault();
     var vibes=$$('.vibe.on').map(function(v){ return v.dataset.v; });
     if(!vibes.length){ status.textContent='pick at least one, whatever feels right ✨'; return; }
-    var d=$('#fd').value, t=$('#ft').value, where=$('#fw').value.trim(), msg=$('#fm').value.trim();
+    if(!picked.day){ status.textContent='which day works for you?'; return; }
+    if(!picked.time){ status.textContent='and what time?'; return; }
+    var d=picked.day, t=picked.time, where=$('#fw').value.trim(), msg=$('#fm').value.trim();
     btn.disabled=true; status.textContent='sending…';
 
     send({ answer:'YES', 'Date idea':vibes.join(', '), Day:d, Time:t, Place:where, 'Her message':msg, when:new Date().toLocaleString() },
          'She said YES 🌹 — date details inside')
     .then(function(){
-      var when=new Date(d+'T'+(t||'00:00'));
-      var pretty=when.toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'});
-      var time=when.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
-      $('#echo').textContent = pretty+', '+time+' — '+vibes.join(' & ').toLowerCase()+(where?(', at '+where):'')+'.';
+      $('#echo').textContent = d+', '+(t==='You choose'?'whenever you like':t)+' — '+vibes.join(' & ').toLowerCase()+(where?(', at '+where):'')+'.';
       show('s-done');
       setTimeout(function(){ burst(window.innerWidth/2, window.innerHeight/3, 60); }, 300);
     })
@@ -395,6 +460,8 @@
       btn.disabled=false;
     });
   });
+  try{ history.replaceState({screen:'s-open'}, '', location.pathname); }catch(_){}
+  restore();
 })();
 </script>
 </body>
